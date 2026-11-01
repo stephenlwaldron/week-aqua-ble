@@ -1,0 +1,297 @@
+# Week Aqua aquarium light (BLE) -> ESPHome -> Home Assistant (and Apple Home via the HomeKit Bridge).
+# Verified on a Week Aqua P1200 Pro ("WEK" family). Protocol notes: ../PROTOCOL.md
+#
+# Entities: one RGBW light (W = UV channel) + a "Green Mode" button (resets to the app default spectrum).
+# The fan is automatic: 100% whenever the light is lit, off when it is off.
+#
+# Schedule: the light has its own built-in schedule and IGNORES brightness outside it. This config
+# sets the built-in window to 00:00-23:59 so live control always works; schedule in HA / Apple Home instead.
+#
+# Connect on demand: the light shows a green LED while BLE is connected. The ESP stays disconnected,
+# connects only to send a change, and disconnects after idle_timeout. While it is disconnected the
+# official app can still connect.
+#
+# Other Week Aqua models: adjust the family substitutions below. Not sure what your light expects?
+# Use week-aqua-fake.yaml to capture what the app sends, and please share what you find.
+substitutions:
+  node_name: week-aqua-light
+  friendly_name: Aquarium
+  light_mac: "AA:BB:CC:DD:EE:FF"   # your light's MAC (nRF Connect, or the ESPHome BLE tracker log)
+  idle_timeout: 15s
+  # --- family settings (defaults = WEK family, e.g. P1200; verified) ---
+  service_uuid: FFF0               # older units: FFE0
+  write_uuid: FFF2                 # older units: FFE1
+  live_opcode: "0xF9"              # live brightness = FB <live_opcode> R G B UV 55 55; HJ family: 0xEF (untested)
+
+esphome:
+  name: ${node_name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    priority: 200
+    then:
+      - lambda: 'id(aqua).set_enabled(false);'  # stay disconnected until there's something to send
+
+esp32:
+  board: esp32dev
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Fallback"
+    password: !secret ap_password
+
+web_server:
+  port: 80
+
+time:
+  - platform: homeassistant
+    id: ha_time
+
+esp32_ble_tracker:
+
+ble_client:
+  - mac_address: ${light_mac}
+    id: aqua
+    on_connect:
+      - logger.log: "Connected to P1200"
+    on_disconnect:
+      - logger.log: "Disconnected from P1200"
+
+globals:
+  - id: ch_r
+    type: float
+    initial_value: "0"
+  - id: ch_g
+    type: float
+    initial_value: "0"
+  - id: ch_b
+    type: float
+    initial_value: "0"
+  - id: ch_uv
+    type: float
+    initial_value: "0"
+  - id: pending_power
+    type: bool
+    initial_value: "false"
+  - id: pending_raw
+    type: std::vector<int>
+  - id: inited  # clock + all-day schedule sent since boot
+    type: bool
+    initial_value: "false"
+
+interval:
+  # Retry backstop: anything still pending (failed connect, change during a flush) gets sent.
+  - interval: 3s
+    then:
+      - if:
+          condition:
+            lambda: 'return (id(pending_power) || !id(pending_raw).empty()) && !id(flush).is_running() && !id(flush_send).is_running();'
+          then:
+            - script.execute: flush
+
+script:
+  # Write one frame (bytes as ints) to FFF2 if connected; queued so frames never overlap.
+  - id: write_tx
+    mode: queued
+    max_runs: 12
+    parameters:
+      data: int[]
+    then:
+      - if:
+          condition:
+            lambda: return id(aqua).connected();
+          then:
+            - ble_client.ble_write:
+                id: aqua
+                service_uuid: ${service_uuid}
+                characteristic_uuid: ${write_uuid}
+                value: !lambda |-
+                  std::vector<uint8_t> v(data.begin(), data.end());
+                  ESP_LOGI("aqua", "TX %s", format_hex_pretty(v).c_str());
+                  return v;
+            - delay: 250ms
+
+  # Mark changes pending (debounced: R/G/B/UV outputs update separately).
+  - id: send_power
+    mode: restart
+    then:
+      - delay: 100ms
+      - lambda: 'id(pending_power) = true;'
+      - script.execute: flush
+
+  # Connect if needed, send setup once per boot, send latest pending state, arm idle disconnect.
+  # Connect = enable the client (same as the bench "Connect" switch), wait max 15s.
+  # If it doesn't connect, disable again and leave things pending; the interval retries.
+  - id: flush
+    mode: single
+    then:
+      - script.stop: idle_disconnect
+      - if:
+          condition:
+            lambda: return !id(aqua).connected();
+          then:
+            - logger.log: "Connecting to P1200..."
+            - lambda: 'id(aqua).set_enabled(true);'
+            - wait_until:
+                condition:
+                  lambda: return id(aqua).connected();
+                timeout: 15s
+      - if:
+          condition:
+            lambda: return !id(aqua).connected();
+          then:
+            - logger.log: "Connect timed out, will retry"
+            - lambda: 'id(aqua).set_enabled(false);'
+            - delay: 2s
+          else:
+            - script.execute: flush_send
+
+  - id: flush_send
+    mode: single
+    then:
+      - if:
+          condition:
+            lambda: return !id(inited);
+          then:
+            # Same sequence the app sends on open: clock, F9, schedule mode, all-day window.
+            - if:
+                condition:
+                  lambda: return id(ha_time).now().is_valid();
+                then:
+                  - lambda: |-
+                      auto t = id(ha_time).now();
+                      auto bcd = [](int n) -> int { return ((n / 10) << 4) | (n % 10); };
+                      id(write_tx).execute(std::vector<int>{0xFF, bcd(t.hour), bcd(t.minute), bcd(t.second), 0x55, 0x55, 0x55, 0x55});
+                  - script.wait: write_tx
+            - lambda: 'id(write_tx).execute(std::vector<int>{0xF9, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55});'
+            - script.wait: write_tx
+            - lambda: 'id(write_tx).execute(std::vector<int>{0xFD, 0xF1, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55});'
+            - script.wait: write_tx
+            - lambda: 'id(write_tx).execute(std::vector<int>{0xFE, 0xF9, 0x00, 0x00, 0x23, 0x59, 0x00, 0x00});'
+            - script.wait: write_tx
+            - lambda: 'id(write_tx).execute(std::vector<int>{0xFD, 0xF1, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55});'
+            - script.wait: write_tx
+            - lambda: 'id(inited) = true;'
+      - if:
+          condition:
+            lambda: return id(pending_power);
+          then:
+            - lambda: |-
+                id(pending_power) = false;
+                auto b = [](float v) -> int { return (int) lroundf(clamp(v, 0.0f, 1.0f) * 235.0f); };
+                id(write_tx).execute(std::vector<int>{0xFB, ${live_opcode}, b(id(ch_r)), b(id(ch_g)), b(id(ch_b)), b(id(ch_uv)), 0x55, 0x55});
+            - script.wait: write_tx
+            # Fan follows the light: 100% whenever any channel is lit, else 0
+            - lambda: |-
+                bool lit = id(ch_r) > 0 || id(ch_g) > 0 || id(ch_b) > 0 || id(ch_uv) > 0;
+                id(write_tx).execute(std::vector<int>{0xFC, lit ? 0xEB : 0x00, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55});
+            - script.wait: write_tx
+      - if:
+          condition:
+            lambda: return !id(pending_raw).empty();
+          then:
+            - lambda: |-
+                std::vector<int> f = id(pending_raw);
+                id(pending_raw).clear();
+                id(write_tx).execute(f);
+            - script.wait: write_tx
+      - script.execute: idle_disconnect
+
+  - id: idle_disconnect
+    mode: restart
+    then:
+      - delay: ${idle_timeout}
+      - if:
+          condition:
+            lambda: 'return !id(flush).is_running() && !id(flush_send).is_running();'
+          then:
+            - logger.log: "Idle, disconnecting (green LED off)"
+            - lambda: 'id(aqua).set_enabled(false);'
+
+output:
+  - platform: template
+    id: out_r
+    type: float
+    write_action:
+      - lambda: 'id(ch_r) = state;'
+      - script.execute: send_power
+  - platform: template
+    id: out_g
+    type: float
+    write_action:
+      - lambda: 'id(ch_g) = state;'
+      - script.execute: send_power
+  - platform: template
+    id: out_b
+    type: float
+    write_action:
+      - lambda: 'id(ch_b) = state;'
+      - script.execute: send_power
+  - platform: template
+    id: out_uv
+    type: float
+    write_action:
+      - lambda: 'id(ch_uv) = state;'
+      - script.execute: send_power
+
+light:
+  - platform: rgbw
+    name: None
+    id: aquarium
+    red: out_r
+    green: out_g
+    blue: out_b
+    white: out_uv
+    gamma_correct: 1.0
+    default_transition_length: 0s
+    color_interlock: false
+    restore_mode: RESTORE_DEFAULT_OFF
+    # App default spectrum ("green mode") (app frame FBF9 6C E3 73 EB = 108/227/115/235 of 235)
+    initial_state:
+      brightness: 100%
+      red: 45.96%
+      green: 96.60%
+      blue: 48.94%
+      white: 100%
+
+# Reset to the app's green mode, keep brightness
+button:
+  - platform: template
+    name: Green Mode
+    icon: mdi:fishbowl
+    on_press:
+      - light.turn_on:
+          id: aquarium
+          red: 45.96%
+          green: 96.60%
+          blue: 48.94%
+          white: 100%
+
+# Debug: raw hex to FFF2 (connects on demand)
+text:
+  - platform: template
+    name: Hex Command
+    entity_category: diagnostic
+    optimistic: true
+    mode: text
+    max_length: 64
+    set_action:
+      - lambda: |-
+          std::vector<int> out;
+          std::string s;
+          for (char c : x) if (isxdigit(c)) s += c;
+          for (size_t i = 0; i + 1 < s.size(); i += 2)
+            out.push_back((int) strtol(s.substr(i, 2).c_str(), nullptr, 16));
+          id(pending_raw) = out;
+      - script.execute: flush

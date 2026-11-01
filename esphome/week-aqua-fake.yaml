@@ -1,0 +1,75 @@
+# Week Aqua "fake light": an ESP32 that impersonates your light so you can log exactly what the
+# official app sends. This is how the P1200 protocol was confirmed. Use it to learn your own model.
+#
+# 1. In nRF Connect (phone), scan for your light and note its NAME and MANUFACTURER DATA
+#    (e.g. "<0x4657> 0001AABBCCDDEEFF": company id 0x4657 = on-air bytes 57 46, then the rest).
+# 2. Put them in the substitutions below, flash, and UNPLUG THE REAL LIGHT.
+# 3. In the app, add/connect the light (it is the ESP now) and use the controls.
+# 4. Watch the logs (ESPHome dashboard, `esphome logs`, or the web UI on port 80):
+#    every write is logged as "APP WROTE FFF2: ...", and the last one is shown as a sensor.
+#
+# Older units that use FFE0/FFE1 instead of FFF0/FFF2: change the UUIDs below to match nRF Connect.
+substitutions:
+  node_name: week-aqua-fake
+  light_name: "B3.0-P1200Pro-1210"   # your light's advertised name (max 20 chars)
+
+esphome:
+  name: ${node_name}
+  friendly_name: Week Aqua Fake
+
+esp32:
+  board: esp32dev
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+web_server:
+  port: 80
+
+esp32_ble:
+  name: ${light_name}
+
+esp32_ble_server:
+  # Manufacturer data copied from your light: company id (little-endian) first, then the payload.
+  # P1200 example: 57 46 ("WF" = WEK family) 00 01 + the light's MAC. Replace with yours.
+  manufacturer_data: [0x57, 0x46, 0x00, 0x01, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]
+  on_connect:
+    - logger.log: "APP CONNECTED"
+  on_disconnect:
+    - logger.log: "APP DISCONNECTED"
+  services:
+    - uuid: FFF0
+      advertise: true
+      characteristics:
+        - uuid: FFF2
+          write: true
+          write_no_response: true
+          value:
+            data: [0x00]
+          on_write:
+            then:
+              - lambda: |-
+                  std::string h = format_hex_pretty(x);
+                  ESP_LOGI("fake", "APP WROTE FFF2: %s (%u)", h.c_str(), (unsigned) x.size());
+                  id(last_write).publish_state(h);
+        - uuid: FFF1
+          read: true
+          notify: true
+          value:
+            data: [0x00]
+
+text_sensor:
+  - platform: template
+    name: Last App Write
+    id: last_write
