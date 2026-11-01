@@ -1,7 +1,7 @@
 # Week Aqua aquarium light (BLE) -> ESPHome -> Home Assistant (and Apple Home via the HomeKit Bridge).
 # Verified on a Week Aqua P1200 Pro ("WEK" family). Protocol notes: ../PROTOCOL.md
 #
-# Entities: one RGBW light (W = UV channel) + a "Green Mode" button (resets to the app default spectrum).
+# Entity: one RGBW light (W = UV channel). Every turn-on resets it to the app default spectrum ("green mode").
 # The fan is automatic: 100% whenever the light is lit, off when it is off.
 #
 # Schedule: the light has its own built-in schedule and IGNORES brightness outside it. This config
@@ -264,13 +264,9 @@ light:
       green: 96.60%
       blue: 48.94%
       white: 100%
-
-# Reset to the app's green mode, keep brightness
-button:
-  - platform: template
-    name: Green Mode
-    icon: mdi:fishbowl
-    on_press:
+    # Every off -> on snaps back to the default spectrum ("green mode"), keeping the requested brightness.
+    # Colors can be changed freely while it's on; the next turn-on resets them.
+    on_turn_on:
       - light.turn_on:
           id: aquarium
           red: 45.96%

@@ -21,8 +21,8 @@ one, let me know either way. Other Week Aqua models I haven't been able to test,
 In Home Assistant you get:
 
 - an RGBW light. R/G/B are the color, and the UV channel is mapped to "white"
-- a Green Mode button that puts the app's default spectrum back without changing brightness
-  (HomeKit remembers whatever color you last picked, so it's handy)
+- every time it turns on, it goes back to the app's default spectrum ("green mode") at whatever
+  brightness you picked. Play with colors all you want, the next turn-on resets them
 - the fan runs at 100% whenever the light is on and stops when it's off. I didn't want to control
   it separately
 
@@ -36,7 +36,7 @@ disconnected the official app still works too.
 2. Copy `esphome/week-aqua-light.yaml` into your ESPHome setup and set `light_mac`. It uses the usual
    secrets: `wifi_ssid`, `wifi_password`, `ap_password`, `api_key` and `ota_password`.
 3. Flash any regular ESP32 and put it within a few meters of the light.
-4. Adopt it in HA. For Apple Home, expose the light (and the button if you want it) through the HomeKit bridge.
+4. Adopt it in HA. For Apple Home, expose the light through the HomeKit bridge.
 5. Set your on/off times in HA or Apple Home, not in the Week Aqua app.
 
 ## Schedule
