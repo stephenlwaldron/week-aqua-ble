@@ -1,85 +1,82 @@
-# Week Aqua BLE: local control for Week Aqua aquarium lights
+# week-aqua-ble
 
-Control a **Week Aqua** Bluetooth aquarium light from **Home Assistant** (and Apple Home, Google, …)
-with a ~$5 ESP32 running ESPHome. No phone app, no cloud.
+ESPHome config for controlling Week Aqua Bluetooth aquarium lights from Home Assistant, plus notes
+on the BLE protocol.
 
-The Bluetooth protocol was reverse-engineered from scratch. As far as we know, this is the first
-public write-up of it. See **[PROTOCOL.md](PROTOCOL.md)**.
+I have a P1200 Pro and got tired of opening the app every time I wanted to change it. There was no
+integration and I couldn't find the protocol written up anywhere, so I worked it out (decompiled
+the app, then sniffed what it actually sends). An ESP32 next to the tank now runs it, and it shows
+up in Apple Home through HA's HomeKit bridge like any other light.
 
-| Model | Family | Status |
-|---|---|---|
-| P1200 Pro (`B3.0-P1200Pro-1210`) | WEK | ✅ Verified: brightness (R/G/B/UV), fan, clock, schedule |
-| P600 Pro / P900 Pro | probably WEK | 🟡 Very likely the same, since it's the same product line. Please confirm! |
-| Other Week Aqua lights | various | ❓ Untested. Probably close; see "Other models" below |
+Protocol details are in [PROTOCOL.md](PROTOCOL.md).
 
-## What you get
+## What works
 
-- **An RGBW light entity**: red, green and blue as color, the **UV channel as white**, plus brightness.
-  It shows up in Apple Home as a normal color light through the HomeKit Bridge.
-- **A "Green Mode" button** that resets the light to the app's default spectrum while keeping
-  brightness. Handy because HomeKit remembers the last color you picked.
-- **An automatic fan**: 100% while the light is on, off when it's off.
-- **No green "connected" LED.** The ESP connects only to send a change, then disconnects. The official
-  app still works whenever the ESP is idle.
+Tested on my P1200 Pro (shows up as `B3.0-P1200Pro-1210`): brightness for all four channels
+(R/G/B/UV), fan, clock and schedule.
+
+The P600 Pro and P900 Pro are the same product line, so they'll probably work as-is. If you have
+one, let me know either way. Other Week Aqua models I haven't been able to test, see further down.
+
+In Home Assistant you get:
+
+- an RGBW light. R/G/B are the color, and the UV channel is mapped to "white"
+- a Green Mode button that puts the app's default spectrum back without changing brightness
+  (HomeKit remembers whatever color you last picked, so it's handy)
+- the fan runs at 100% whenever the light is on and stops when it's off. I didn't want to control
+  it separately
+
+The ESP only connects to the light when it has something to send, and drops the connection about
+15 seconds later. While it's connected the light shows a green LED, which bugged me, and with it
+disconnected the official app still works too.
 
 ## Setup
 
-1. Find your light's **MAC address**: scan with nRF Connect on your phone, or look in an ESPHome
-   BLE tracker log. P1200 units advertise service `FFF0`.
-2. Copy [`esphome/week-aqua-light.yaml`](esphome/week-aqua-light.yaml) into your ESPHome config. Set `light_mac`, and
-   make sure your `secrets.yaml` has `wifi_ssid`, `wifi_password`, `ap_password`, `api_key` and `ota_password`.
-3. Flash any ESP32 (classic ESP32, BLE required) and place it within a few meters of the light.
-4. Adopt it in Home Assistant. To use it in Apple Home, expose `light.*` (and `button.*` if you want
-   Green Mode) through the HomeKit Bridge integration.
-5. **Schedule it in Home Assistant or Apple Home**, not in the Week Aqua app (see the gotcha below).
+1. Find your light's MAC address. nRF Connect on your phone works, and so does the BLE tracker log in ESPHome.
+2. Copy `esphome/week-aqua-light.yaml` into your ESPHome setup and set `light_mac`. It uses the usual
+   secrets: `wifi_ssid`, `wifi_password`, `ap_password`, `api_key` and `ota_password`.
+3. Flash any regular ESP32 and put it within a few meters of the light.
+4. Adopt it in HA. For Apple Home, expose the light (and the button if you want it) through the HomeKit bridge.
+5. Set your on/off times in HA or Apple Home, not in the Week Aqua app. Read the next bit to see why.
 
-## ⚠️ The gotcha that will waste your evening
+## The schedule thing
 
-These lights run a **built-in schedule**, and outside its time window they **silently ignore
-brightness commands**. The config sets the built-in window to 00:00–23:59 when it first connects, so
-live control works at any hour. That also means the light's own schedule is off. Do your on/off
-timing in your home automation instead. To go back to the built-in schedule, set it again in the app.
+This one got me. The light has its own built-in schedule, and outside that time window it just
+ignores brightness commands, without any error. I spent a good while thinking my commands were wrong
+when it was actually 1am and my schedule ended at 5pm.
 
-## Compatibility & safety: what to expect
+So on first connect the config sets the light's built-in window to 00:00-23:59, and live control
+works at any time after that. The catch is that the light no longer follows its own schedule,
+so do your timing in HA or HomeKit. If you want the built-in schedule back, set it again in the app.
 
-Trying this out is low-risk. Here's why:
+## Is it safe to try?
 
-- **It only sends commands the official app sends.** Every frame was captured from the real app
-  talking to a real light. Nothing here goes beyond what the app's sliders and schedule screen do.
-- **It can't touch your light's firmware.** The Week Aqua app has no firmware-update code at all, so
-  the light has no update mechanism to trigger by accident. Its firmware is fixed.
-- **Everything it changes, the app can change back.** The config changes two things the app also
-  sets: brightness/fan levels, and the built-in schedule window (set to all-day). To go back, open
-  the Week Aqua app and set your schedule and levels again.
-- **Unplugging resets nothing, and nothing gets "stuck".** Settings live in the light's memory
-  and survive power cuts, so restore them by setting them again, not by power-cycling.
-- **Unknown model? Start with the fake light.** [`week-aqua-fake.yaml`](esphome/week-aqua-fake.yaml)
-  never talks to your light at all. It only listens to the app, so you can see your model's
-  commands before sending anything.
-- **One connection at a time.** If the ESP can't connect, check that the phone app isn't connected
-  (close it). The ESP gives up the connection 15 s after each change, so the app can always get in.
+As far as I can tell, yes.
 
-If your light ever acts strangely, set it up again in the official app. That overwrites everything this
-project touches. As the license says, there's no warranty, but there's also no known way for these
-commands to harm the light.
+- Everything it sends is something the official app sends. I captured these from the app talking
+  to the light, I didn't guess them.
+- The app has no firmware update code at all, so there's nothing in the light that could get
+  "updated" by accident.
+- It only changes the levels, the fan and the schedule window, and you can set all of those back
+  in the app. If anything ever seems off, set the light up again in the app and that overwrites it.
+- Settings are saved in the light, so unplugging it doesn't reset anything (it doesn't need to).
+- The light only accepts one connection at a time. If the ESP can't connect, close the app on your phone.
+
+No warranty obviously, but I haven't found any way for these commands to hurt the light.
 
 ## Other models
 
-Different Week Aqua families may use different UUIDs or opcodes. The config has knobs for the known
-differences (`service_uuid`, `write_uuid`, `live_opcode`), described in [PROTOCOL.md](PROTOCOL.md).
+Different Week Aqua families seem to differ in small ways: older UUIDs (`FFE0`/`FFE1` instead of
+`FFF0`/`FFF2`), or a different brightness opcode. The config has substitutions for those, and
+PROTOCOL.md has what I found in the app for the other families. Note that none of that is tested.
 
-To find out for certain what *your* light expects, use the **fake light**:
-[`esphome/week-aqua-fake.yaml`](esphome/week-aqua-fake.yaml) makes an ESP32 impersonate your light. Connect
-the app to it, move the sliders, and the ESP logs every command the app sends. Then send the same frames
-from the main config (it has a "Hex Command" debug entity for experiments).
+The best way to find out what your light wants is `esphome/week-aqua-fake.yaml`. It makes an ESP32
+pretend to be your light, then you connect the app to it, move some sliders, and it logs every
+command. That's how I figured mine out. It never talks to the real light, so there's no risk.
 
-**Please open an issue or PR with your model and findings.** Every model someone adds helps the next owner.
+If you get another model working (or not working), please open an issue. It'd be great to grow the
+list.
 
-## Disclaimer
+---
 
-An independent, unofficial project with no affiliation to Week Aqua. Only commands the official
-app itself sends are used, but this comes with no warranty: use it at your own risk.
-
-## License
-
-MIT
+Not affiliated with Week Aqua. MIT license.
