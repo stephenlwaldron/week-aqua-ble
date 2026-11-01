@@ -9,6 +9,7 @@ public write-up of it. See **[PROTOCOL.md](PROTOCOL.md)**.
 | Model | Family | Status |
 |---|---|---|
 | P1200 Pro (`B3.0-P1200Pro-1210`) | WEK | ✅ Verified: brightness (R/G/B/UV), fan, clock, schedule |
+| P600 Pro / P900 Pro | probably WEK | 🟡 Very likely the same, since it's the same product line. Please confirm! |
 | Other Week Aqua lights | various | ❓ Untested. Probably close; see "Other models" below |
 
 ## What you get
@@ -38,6 +39,29 @@ These lights run a **built-in schedule**, and outside its time window they **sil
 brightness commands**. The config sets the built-in window to 00:00–23:59 when it first connects, so
 live control works at any hour. That also means the light's own schedule is off. Do your on/off
 timing in your home automation instead. To go back to the built-in schedule, set it again in the app.
+
+## Compatibility & safety: what to expect
+
+Trying this out is low-risk. Here's why:
+
+- **It only sends commands the official app sends.** Every frame was captured from the real app
+  talking to a real light. Nothing here goes beyond what the app's sliders and schedule screen do.
+- **It can't touch your light's firmware.** The Week Aqua app has no firmware-update code at all, so
+  the light has no update mechanism to trigger by accident. Its firmware is fixed.
+- **Everything it changes, the app can change back.** The config changes two things the app also
+  sets: brightness/fan levels, and the built-in schedule window (set to all-day). To go back, open
+  the Week Aqua app and set your schedule and levels again.
+- **Unplugging resets nothing, and nothing gets "stuck".** Settings live in the light's memory
+  and survive power cuts, so restore them by setting them again, not by power-cycling.
+- **Unknown model? Start with the fake light.** [`week-aqua-fake.yaml`](esphome/week-aqua-fake.yaml)
+  never talks to your light at all. It only listens to the app, so you can see your model's
+  commands before sending anything.
+- **One connection at a time.** If the ESP can't connect, check that the phone app isn't connected
+  (close it). The ESP gives up the connection 15 s after each change, so the app can always get in.
+
+If your light ever acts strangely, set it up again in the official app. That overwrites everything this
+project touches. As the license says, there's no warranty, but there's also no known way for these
+commands to harm the light.
 
 ## Other models
 
