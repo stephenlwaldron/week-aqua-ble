@@ -37,21 +37,16 @@ disconnected the official app still works too.
    secrets: `wifi_ssid`, `wifi_password`, `ap_password`, `api_key` and `ota_password`.
 3. Flash any regular ESP32 and put it within a few meters of the light.
 4. Adopt it in HA. For Apple Home, expose the light (and the button if you want it) through the HomeKit bridge.
-5. Set your on/off times in HA or Apple Home, not in the Week Aqua app. Read the next bit to see why.
+5. Set your on/off times in HA or Apple Home, not in the Week Aqua app.
 
-## The schedule thing
+## Schedule
 
-This one got me. The light has its own built-in schedule, and outside that time window it just
-ignores brightness commands, without any error. I spent a good while thinking my commands were wrong
-when it was actually 1am and my schedule ended at 5pm.
-
-So on first connect the config sets the light's built-in window to 00:00-23:59, and live control
-works at any time after that. The catch is that the light no longer follows its own schedule,
-so do your timing in HA or HomeKit. If you want the built-in schedule back, set it again in the app.
+The light won't turn on outside its built-in schedule, so the config sets that schedule to all day.
+Do your on/off times in HA or HomeKit instead.
 
 ## Is it safe to try?
 
-As far as I can tell, yes.
+Yes.
 
 - Everything it sends is something the official app sends. I captured these from the app talking
   to the light, I didn't guess them.
@@ -61,8 +56,6 @@ As far as I can tell, yes.
   in the app. If anything ever seems off, set the light up again in the app and that overwrites it.
 - Settings are saved in the light, so unplugging it doesn't reset anything (it doesn't need to).
 - The light only accepts one connection at a time. If the ESP can't connect, close the app on your phone.
-
-No warranty obviously, but I haven't found any way for these commands to hurt the light.
 
 ## Other models
 

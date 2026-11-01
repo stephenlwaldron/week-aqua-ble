@@ -50,10 +50,9 @@ Editing the schedule sends `FE F9 ...` followed by `FD F1`.
 
 The default spectrum at 100% ("green mode" on mine) is `FB F9 6C E3 73 EB 55 55`.
 
-### Brightness is ignored outside the schedule
+### Schedule
 
-The light runs its own schedule off its own clock. Outside the `FE F9` window it stays dark and
-ignores `FB F9`, with no error. To control it whenever you want, send:
+The light stays off outside its `FE F9` schedule window and ignores `FB F9` there. For control at any time, set the window to all day:
 
 ```
 FF <current time>  ->  F9  ->  FD F1  ->  FE F9 00 00 23 59 00 00  ->  FD F1
